@@ -13,7 +13,7 @@ A full virtual keyboard server for remote control over LAN, designed to run on y
 
 1. Run the script or the `.exe` file.
 2. Open the link in your browser (shown in GUI or QR).
-3. Tap your keys remotely like a goddamn hacker.
+3. Tap keys and use combination keys remotely.
 
 ## Build
 
