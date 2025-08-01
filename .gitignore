@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.pyd
+*.pyo
+*.log
+
+# Tkinter / QR / Tray temp
+*.png
+*.jpg
+*.ico
+
+# Build artefacts
+build/
+dist/
+*.spec
+
+# Lock file
+plodb.lock
+
+# Virtualenv
+env/
+venv/
+ENV/
+.venv/
+
+# System
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# VSCode etc.
+.vscode/
+.idea/
+*.code-workspace
+
+# OS crash
+*.bak
+*.swp
+*.tmp
+
+# PyInstaller
+*.exe
+*.app
+*.dll
+*.manifest

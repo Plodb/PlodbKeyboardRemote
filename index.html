@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PlodbKeyboardRemote</title>
+  <link rel="icon" href="data:image/png;base64,{ICON_BASE64}">
+  <style>
+    body {
+      background: #fed7e9;
+      margin: 0;
+      font-family: monospace;
+      justify-content: center;
+      display: flex;
+      width: 100vw;
+      height: fit-content;
+      overflow: hidden;
+    }
+
+    #keyboard {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 1rem;
+      margin: 1rem;
+      border-radius: 14px;
+      background-color: white;
+      height: fit-content;
+      width: 100%;
+    }
+
+    .row {
+      display: flex;
+      gap: 6px;
+    }
+
+    button {
+      flex: 1;
+      padding: 6px 10px;
+      font-size: 1.5vw;
+      background: #fd9bca;
+      color: #fff;
+      border: #fc69b0 solid;
+      border-radius: 5px;
+      user-select: none;
+      touch-action: manipulation;
+      transition: all 0.1s ease;
+    }
+
+    button.spacebar {
+      flex-grow: 6;
+      flex-basis: 0;
+    }
+
+    button.pressed {
+      background: #ffc0d3 !important;
+      color: #111 !important;
+      transform: scale(1.05);
+    }
+
+    button.held {
+      background: #9bfdce !important;
+      color: #111 !important;
+      font-weight: bold;
+      transform: scale(1.1);
+    }
+  </style>
+</head>
+
+<body>
+  <div id="keyboard"></div>
+
+  <script>
+    const layout = [
+      ["esc", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12"],
+      ["`", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=", "backspace"],
+      ["tab", "q", "w", "e", "r", "t", "y", "u", "i", "o", "p", "[", "]", "\\"],
+      ["capslock", "a", "s", "d", "f", "g", "h", "j", "k", "l", ";", "'", "enter"],
+      ["shift", "z", "x", "c", "v", "b", "n", "m", ",", ".", "/", "up", "?", "shift"],
+      ["ctrl", "alt", "space", "alt", "ctrl", "left", "down", "right"]
+    ];
+
+    const ws = new WebSocket("ws://" + location.hostname + ":8765");
+    const container = document.getElementById("keyboard");
+    let toggled = new Set();
+    let timers = {};
+    let lastClick = {};
+    let holdTimeout = {};
+    let tempHeld = new Set();
+    const isModifier = key => ["ctrl", "shift", "alt"].includes(key);
+    const isCommandKey = key => ["enter", "backspace", "delete", "tab"].includes(key);
+
+    layout.forEach(row => {
+      const rowEl = document.createElement("div");
+      rowEl.className = "row";
+      row.forEach(key => {
+        const btn = document.createElement("button");
+        btn.innerText = key.length === 1 ? key.toUpperCase() : key;
+        btn.dataset.key = key;
+        btn.classList.add("key");
+
+        if (key === "space") {
+          btn.classList.add("spacebar");
+          btn.innerText = "SPACE";
+        }
+
+        btn.onpointerdown = () => {
+          const now = Date.now();
+
+          if (isModifier(key)) {
+            if (lastClick[key] && now - lastClick[key] < 300) {
+              if (toggled.has(key)) {
+                toggled.delete(key);
+                ws.send(JSON.stringify({ type: "keyup", key }));
+              } else {
+                toggled.add(key);
+                ws.send(JSON.stringify({ type: "keydown", key }));
+              }
+              updateHeld();
+              return;
+            }
+
+            lastClick[key] = now;
+            ws.send(JSON.stringify({ type: "keydown", key }));
+            btn.classList.add("pressed");
+            tempHeld.add(key);
+            updateHeld();
+            return;
+          }
+
+          if (isCommandKey(key)) {
+            ws.send(JSON.stringify({ type: "keydown", key }));
+            btn.classList.add("pressed");
+            return;
+          }
+
+          holdTimeout[key] = setTimeout(() => {
+            timers[key] = setInterval(() => {
+              ws.send(JSON.stringify({ type: "keydown", key }));
+            }, 50);
+          }, 1500);
+
+          ws.send(JSON.stringify({ type: "keydown", key }));
+          btn.classList.add("pressed");
+          setTimeout(() => btn.classList.remove("pressed"), 30);
+        };
+
+        btn.onpointerup = () => {
+          clearTimeout(holdTimeout[key]);
+          if (typeof timers[key] === 'number') clearInterval(timers[key]);
+
+          if (isModifier(key)) {
+            if (tempHeld.has(key)) {
+              ws.send(JSON.stringify({ type: "keyup", key }));
+              tempHeld.delete(key);
+              btn.classList.remove("pressed");
+            }
+            if (!toggled.has(key)) btn.classList.remove("pressed");
+            updateHeld();
+            return;
+          }
+
+          if (!toggled.has(key)) {
+            ws.send(JSON.stringify({ type: "keyup", key }));
+          }
+
+          if (isCommandKey(key)) {
+            ws.send(JSON.stringify({ type: "keyup", key }));
+            btn.classList.remove("pressed");
+          }
+        };
+
+        rowEl.appendChild(btn);
+      });
+      container.appendChild(rowEl);
+    });
+
+    function updateHeld() {
+      document.querySelectorAll("button").forEach(btn => {
+        const key = btn.dataset.key;
+        if (toggled.has(key)) {
+          btn.classList.add("held");
+        } else {
+          btn.classList.remove("held");
+        }
+      });
+    }
+    window.addEventListener("blur", () => {
+      for (const key of toggled) {
+        ws.send(JSON.stringify({ type: "keyup", key }));
+      }
+      toggled.clear();
+      updateHeld();
+    });
+  </script>
+</body>
+
+</html>
