@@ -105,26 +105,42 @@ def show_gui():
 # --- WebSocket logic ---
 async def handler(websocket):
     global toggled_mods, active_mods
-    async for message in websocket:
-        try:
-            if message.startswith("toggle:"):
-                key = message[7:]
-                if key in toggled_mods:
-                    keyboard.release(key)
-                    toggled_mods.remove(key)
-                else:
+    try:
+        async for message in websocket:
+            try:
+                if message.startswith("toggle:"):
+                    key = message[7:]
+                    if key in toggled_mods:
+                        keyboard.release(key)
+                        toggled_mods.remove(key)
+                    else:
+                        keyboard.press(key)
+                        toggled_mods.add(key)
+                elif message.startswith("press:"):
+                    key = message[6:]
                     keyboard.press(key)
-                    toggled_mods.add(key)
-            elif message.startswith("press:"):
-                key = message[6:]
-                keyboard.press(key)
-                active_mods.add(key)
-            elif message.startswith("release:"):
-                key = message[8:]
+                    active_mods.add(key)
+                elif message.startswith("release:"):
+                    key = message[8:]
+                    keyboard.release(key)
+                    active_mods.discard(key)
+            except Exception as e:
+                logging.warning("Keyboard action failed: %s", e)
+    finally:
+        # Release any keys that might still be pressed when the client disconnects
+        for key in toggled_mods.copy():
+            try:
                 keyboard.release(key)
-                active_mods.discard(key)
-        except Exception as e:
-            logging.warning("Keyboard action failed: %s", e)
+            except Exception as e:
+                logging.warning("Keyboard action cleanup failed: %s", e)
+        toggled_mods.clear()
+
+        for key in active_mods.copy():
+            try:
+                keyboard.release(key)
+            except Exception as e:
+                logging.warning("Keyboard action cleanup failed: %s", e)
+        active_mods.clear()
 
 async def start_ws_server():
     async with websockets.serve(handler, "", 8765):
