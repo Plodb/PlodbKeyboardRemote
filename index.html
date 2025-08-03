@@ -65,9 +65,20 @@
 </head>
 
 <body>
+  <button id="lang-switch" class="utility-button">🌐 Lang</button>
   <div id="keyboard"></div>
 
   <script>
+    let currentLayout = [];
+    let currentLayoutName = "en";
+
+    const container = document.getElementById("keyboard");
+    let toggled = new Set();
+    let timers = {};
+    let lastClick = {};
+    let holdTimeout = {};
+    let tempHeld = new Set();
+
     const layout_en = [
       ["esc", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12"],
       ["`", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=", "backspace"],
@@ -87,28 +98,48 @@
     ];
 
     const ruToEnMap = {
-      "ё": "`", "1": "1", "2": "2", "3": "3", "4": "4", "5": "5", "6": "6", "7": "7", "8": "8", "9": "9", "0": "0", "-": "-", "=": "=",
-      "й": "q", "ц": "w", "у": "e", "к": "r", "е": "t", "н": "y", "г": "u", "ш": "i", "щ": "o", "з": "p", "х": "[", "ъ": "]",
-      "ф": "a", "ы": "s", "в": "d", "а": "f", "п": "g", "р": "h", "о": "j", "л": "k", "д": "l", "ж": ";", "э": "'",
-      "я": "z", "ч": "x", "с": "c", "м": "v", "и": "b", "т": "n", "ь": "m", "б": ",", "ю": ".", ".": "/"
+      "ё": "`", "й": "q", "ц": "w", "у": "e", "к": "r", "е": "t", "н": "y", "г": "u",
+      "ш": "i", "щ": "o", "з": "p", "х": "[", "ъ": "]", "ф": "a", "ы": "s", "в": "d",
+      "а": "f", "п": "g", "р": "h", "о": "j", "л": "k", "д": "l", "ж": ";", "э": "'",
+      "я": "z", "ч": "x", "с": "c", "м": "v", "и": "b", "т": "n", "ь": "m",
+      "б": ",", "ю": ".", ".": "/"
     };
-
-    const toPhysical = key =>
-      currentLayout === layout_ru && ruToEnMap[key] ? ruToEnMap[key] : key;
-
-    let currentLayout = layout_en;
-    const ws = new WebSocket("ws://" + location.hostname + ":8765");
-    const container = document.getElementById("keyboard");
-    let toggled = new Set();
-    let timers = {};
-    let lastClick = {};
-    let holdTimeout = {};
-    let tempHeld = new Set();
 
     const isModifier = key => ["ctrl", "shift", "alt"].includes(key);
     const isCommandKey = key => ["enter", "backspace", "delete", "tab"].includes(key);
+    const toPhysical = key => currentLayoutName === "ru" && ruToEnMap[key] ? ruToEnMap[key] : key;
 
-    const renderKeyboard = () => {
+    const ws = new WebSocket("ws://" + location.hostname + ":8765");
+
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.type === "sync") {
+        currentLayoutName = data.layout;
+        currentLayout = currentLayoutName === "ru" ? layout_ru : layout_en;
+        renderKeyboard();
+      }
+      if (data.type === "keyup") {
+        const key = data.key;
+        toggled.delete(key);
+        tempHeld.delete(key);
+        const btn = document.querySelector(`button[data-key="${key}"]`);
+        if (btn) btn.classList.remove("pressed", "held");
+        updateHeld();
+      }
+    };
+
+    function updateHeld() {
+      document.querySelectorAll("button").forEach(btn => {
+        const key = btn.dataset.key;
+        if (toggled.has(key)) {
+          btn.classList.add("held");
+        } else {
+          btn.classList.remove("held");
+        }
+      });
+    }
+
+    function renderKeyboard() {
       container.innerHTML = "";
       currentLayout.forEach(row => {
         const rowEl = document.createElement("div");
@@ -118,7 +149,6 @@
           btn.innerText = key.length === 1 ? key.toUpperCase() : key;
           btn.dataset.key = key;
           btn.classList.add("key");
-
           if (key === "space") {
             btn.classList.add("spacebar");
             btn.innerText = "SPACE";
@@ -127,6 +157,20 @@
           btn.onpointerdown = () => {
             const now = Date.now();
             const physicalKey = toPhysical(key);
+            ["alt", "shift", "ctrl"].forEach(mod => {
+              if (tempHeld.has(mod) && !toggled.has(mod) && key !== mod) {
+                ws.send(JSON.stringify({ type: "keyup", key: toPhysical(mod) }));
+                setTimeout(() => {
+                  ws.send(JSON.stringify({ type: "keydown", key: toPhysical(mod) }));
+                }, 25);
+              }
+            });
+
+            clearTimeout(holdTimeout[key]);
+            if (timers[key]) {
+              clearInterval(timers[key]);
+              delete timers[key];
+            }
 
             if (isModifier(key)) {
               if (lastClick[key] && now - lastClick[key] < 300) {
@@ -183,32 +227,43 @@
             }, 2000);
           };
 
-
-
           btn.onpointerup = () => {
             clearTimeout(holdTimeout[key]);
-            if (typeof timers[key] === 'number') clearInterval(timers[key]);
+            if (timers[key]) {
+              clearInterval(timers[key]);
+              delete timers[key];
+            }
 
+            const physicalKey = toPhysical(key);
             if (isModifier(key)) {
-              if (tempHeld.has(key)) {
-                ws.send(JSON.stringify({ type: "keyup", key: toPhysical(key) }));
+              if (tempHeld.has(key) && !toggled.has(key)) {
+                ws.send(JSON.stringify({ type: "keyup", key: physicalKey }));
                 tempHeld.delete(key);
                 btn.classList.remove("pressed");
               }
-              if (!toggled.has(key)) btn.classList.remove("pressed");
+              if (!toggled.has(key)) {
+                btn.classList.remove("pressed");
+              }
               updateHeld();
               return;
             }
 
-            const physicalKey = toPhysical(key);
             if (!toggled.has(key)) {
               ws.send(JSON.stringify({ type: "keyup", key: physicalKey }));
             }
 
-            if (tempHeld.has(key)) {
-              tempHeld.delete(key);
-            }
+            tempHeld.delete(key);
             btn.classList.remove("pressed");
+            updateHeld();
+          };
+
+          btn.onpointerleave = () => {
+            if (tempHeld.has(key) && !toggled.has(key)) {
+              ws.send(JSON.stringify({ type: "keyup", key: toPhysical(key) }));
+              tempHeld.delete(key);
+              btn.classList.remove("pressed");
+              updateHeld();
+            }
           };
 
           rowEl.appendChild(btn);
@@ -216,18 +271,7 @@
         container.appendChild(rowEl);
       });
       updateHeld();
-    };
-
-    const updateHeld = () => {
-      document.querySelectorAll("button").forEach(btn => {
-        const key = btn.dataset.key;
-        if (toggled.has(key)) {
-          btn.classList.add("held");
-        } else {
-          btn.classList.remove("held");
-        }
-      });
-    };
+    }
 
     window.addEventListener("blur", () => {
       for (const key of toggled) ws.send(JSON.stringify({ type: "keyup", key: toPhysical(key) }));
@@ -247,18 +291,16 @@
       }
     });
 
-    const langSwitch = document.createElement("button");
-    langSwitch.innerText = "RU / EN";
-    langSwitch.style.position = "absolute";
-    langSwitch.style.top = "8px";
-    langSwitch.style.left = "8px";
-    langSwitch.style.zIndex = "1000";
-    langSwitch.onclick = () => {
-      currentLayout = currentLayout === layout_en ? layout_ru : layout_en;
-      renderKeyboard();
+    document.getElementById("lang-switch").onclick = () => {
+      const alt = "Alt", shift = "Shift";
+      ws.send(JSON.stringify({ type: "keydown", key: alt }));
+      setTimeout(() => ws.send(JSON.stringify({ type: "keydown", key: shift })), 100);
+      setTimeout(() => ws.send(JSON.stringify({ type: "keyup", key: shift })), 150);
+      setTimeout(() => ws.send(JSON.stringify({ type: "keyup", key: alt })), 200);
+      setTimeout(() => ws.send(JSON.stringify({ type: "get_lang" })), 300);
     };
-    document.body.appendChild(langSwitch);
 
+    currentLayout = layout_en;
     renderKeyboard();
   </script>
 </body>

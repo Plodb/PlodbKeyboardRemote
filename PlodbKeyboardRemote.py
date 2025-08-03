@@ -5,6 +5,12 @@ import threading
 import webbrowser
 import io
 import os
+import ctypes
+import time
+import win32gui
+import win32process
+import win32api
+import win32con
 import json
 import sys
 import signal
@@ -40,6 +46,25 @@ ws_server = None
 http_server = None
 root = None
 shutting_down = False
+connected_clients = set()
+
+
+def get_current_lang():
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+
+    hwnd = user32.GetForegroundWindow()
+    thread_id = user32.GetWindowThreadProcessId(hwnd, 0)
+    layout = user32.GetKeyboardLayout(thread_id)
+    lid = layout & 0xFFFF
+
+    buf = ctypes.create_unicode_buffer(9)
+    if kernel32.GetLocaleInfoW(lid, 0x00000003, buf, len(buf)):
+        return buf.value
+    return "unknown"
+
+
+prev_lang = get_current_lang()
 
 
 def shutdown(*_):
@@ -68,9 +93,16 @@ def shutdown(*_):
             logging.warning("Keyboard action cleanup failed: %s", e)
     active_mods.clear()
 
-    if ws_server and ws_loop:
-        ws_loop.call_soon_threadsafe(ws_server.close)
+    if ws_server and ws_loop and not ws_loop.is_closed():
+        ws_server.close()
+        fut = asyncio.run_coroutine_threadsafe(ws_server.wait_closed(), ws_loop)
+    try:
+        fut.result(timeout=3)
+    except Exception as e:
+        logging.warning("Graceful WS shutdown failed: %s", e)
         ws_loop.call_soon_threadsafe(ws_loop.stop)
+
+    ws_loop.call_soon_threadsafe(ws_loop.stop)
 
     if http_server:
         http_server.shutdown()
@@ -183,7 +215,8 @@ def show_gui():
 
 
 async def handler(websocket):
-    global toggled_mods, active_mods
+    global toggled_mods, active_mods, connected_clients
+    connected_clients.add(websocket)
     try:
         async for message in websocket:
             try:
@@ -198,12 +231,32 @@ async def handler(websocket):
                 elif data["type"] == "keyup":
                     keyboard.release(key)
                     active_mods.discard(key)
+                elif data["type"] == "get_lang":
+                    lang = get_current_lang()
+                    print("[SEND] LANG =", lang)
+                    print(
+                        "[SEND] SYNC =", "ru" if lang.lower().startswith("ru") else "en"
+                    )
+                    await websocket.send(json.dumps({"type": "lang", "lang": lang}))
+                    await websocket.send(
+                        json.dumps(
+                            {
+                                "type": "sync",
+                                "layout": (
+                                    "ru" if lang.lower().startswith("ru") else "en"
+                                ),
+                            }
+                        )
+                    )
+
             except Exception as e:
                 logging.warning("Keyboard action failed: %s", e)
     except websockets.exceptions.ConnectionClosedError as e:
         logging.info("WebSocket disconnected cleanly: %s", e)
     except Exception as e:
         logging.error("WebSocket crashed: %s", e)
+    finally:
+        connected_clients.discard(websocket)
 
 
 def run_ws_server():
@@ -220,8 +273,11 @@ def run_ws_server():
     asyncio.set_event_loop(ws_loop)
     try:
         ws_loop.run_until_complete(start())
+    except KeyboardInterrupt:
+        pass
     finally:
-        ws_loop.close()
+        if not ws_loop.is_closed():
+            ws_loop.close()
 
 
 def start_http_server():
@@ -239,6 +295,54 @@ def start_http_server():
         logging.error("HTTP server failed: %s", e)
 
 
+# mod key listener
+from websockets.protocol import State
+
+
+def start_key_watcher():
+    def loop():
+        global prev_lang
+        prev_state = {"alt": False, "ctrl": False, "shift": False}
+
+        while not shutting_down:
+            current_lang = get_current_lang()
+            if current_lang != prev_lang:
+                print(f"[LANG DETECTED] {prev_lang} → {current_lang}")
+                prev_lang = current_lang
+                layout = "ru" if current_lang.lower().startswith("ru") else "en"
+
+                for ws in list(connected_clients):
+                    if ws.state != State.OPEN:
+                        connected_clients.discard(ws)
+                        continue
+                    try:
+                        print(f"[SEND] sync → {layout} → {ws.remote_address}")
+                        asyncio.run_coroutine_threadsafe(
+                            ws.send(json.dumps({"type": "sync", "layout": layout})),
+                            ws_loop,
+                        )
+                    except Exception as e:
+                        logging.warning("Failed to send layout to client: %s", e)
+
+            for key in prev_state:
+                current = keyboard.is_pressed(key)
+                if prev_state[key] and not current:
+                    msg = json.dumps({"type": "keyup", "key": key})
+                    for ws in list(connected_clients):
+                        if ws.state != State.OPEN:
+                            connected_clients.discard(ws)
+                            continue
+                        try:
+                            asyncio.run_coroutine_threadsafe(ws.send(msg), ws_loop)
+                        except Exception as e:
+                            logging.warning("Failed to send keyup: %s", e)
+                prev_state[key] = current
+
+            time.sleep(0.05)
+
+    threading.Thread(target=loop, daemon=True).start()
+
+
 # --- Start ---
 if __name__ == "__main__":
     ensure_single_instance()
@@ -249,7 +353,7 @@ if __name__ == "__main__":
     http_thread = threading.Thread(target=start_http_server)
     ws_thread.start()
     http_thread.start()
-
+    start_key_watcher()
     try:
         show_gui()
     finally:
