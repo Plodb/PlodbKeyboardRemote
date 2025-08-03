@@ -7,10 +7,6 @@ import io
 import os
 import ctypes
 import time
-import win32gui
-import win32process
-import win32api
-import win32con
 import json
 import sys
 import signal
@@ -20,6 +16,8 @@ from tkinter import messagebox
 from PIL import Image, ImageTk, ImageDraw
 import websockets
 import keyboard
+import random
+import string
 import socket
 import portalocker
 import pystray
@@ -47,9 +45,16 @@ http_server = None
 root = None
 shutting_down = False
 connected_clients = set()
+# --- PIN ---
+PIN_CODE = "".join(random.choices(string.digits, k=4))
+authorized_clients = set()
+print(f"[PIN] Web control PIN: {PIN_CODE}")
 
 
+# --- Language ---
 def get_current_lang():
+    SUPPORTED_LANGS = ["en", "ru"]
+
     user32 = ctypes.windll.user32
     kernel32 = ctypes.windll.kernel32
 
@@ -60,7 +65,11 @@ def get_current_lang():
 
     buf = ctypes.create_unicode_buffer(9)
     if kernel32.GetLocaleInfoW(lid, 0x00000003, buf, len(buf)):
-        return buf.value
+        lang = buf.value.lower()
+        if any(lang.startswith(s) for s in SUPPORTED_LANGS):
+            return buf.value
+        print(f"[UNSUPPORTED LAYOUT: {buf.value}] → FORCING ENU")
+        return "ENU"
     return "unknown"
 
 
@@ -179,6 +188,11 @@ def show_gui():
     )
     tk.Label(root, text=f"Web: http://{ip}:8888", font=("Consolas", 10)).pack()
     tk.Label(root, text=f"WS: ws://{ip}:8765", font=("Consolas", 10)).pack()
+    tk.Label(
+        root,
+        text=f"PIN: {PIN_CODE}",
+        font=("Consolas", 10, "bold"),
+    ).pack(pady=(2, 8))
 
     tk.Button(
         root,
@@ -215,48 +229,47 @@ def show_gui():
 
 
 async def handler(websocket):
-    global toggled_mods, active_mods, connected_clients
+    global toggled_mods, active_mods, connected_clients, authorized_clients
     connected_clients.add(websocket)
+    authed = False
+
     try:
         async for message in websocket:
-            try:
-                data = json.loads(message)
-                key = data.get("key", "")
-                if not key:
-                    continue
+            data = json.loads(message)
+            msg_type = data.get("type")
+            key = data.get("key", "")
 
-                if data["type"] == "keydown":
-                    keyboard.press(key)
-                    active_mods.add(key)
-                elif data["type"] == "keyup":
-                    keyboard.release(key)
-                    active_mods.discard(key)
-                elif data["type"] == "get_lang":
-                    lang = get_current_lang()
-                    print("[SEND] LANG =", lang)
-                    print(
-                        "[SEND] SYNC =", "ru" if lang.lower().startswith("ru") else "en"
-                    )
-                    await websocket.send(json.dumps({"type": "lang", "lang": lang}))
-                    await websocket.send(
-                        json.dumps(
-                            {
-                                "type": "sync",
-                                "layout": (
-                                    "ru" if lang.lower().startswith("ru") else "en"
-                                ),
-                            }
-                        )
-                    )
+            if not authed:
+                if msg_type == "pin" and data.get("pin") == PIN_CODE:
+                    authorized_clients.add(websocket)
+                    authed = True
+                    await websocket.send(json.dumps({"type": "pin_accepted"}))
+                else:
+                    await websocket.send(json.dumps({"type": "pin_required"}))
+                continue
 
-            except Exception as e:
-                logging.warning("Keyboard action failed: %s", e)
-    except websockets.exceptions.ConnectionClosedError as e:
-        logging.info("WebSocket disconnected cleanly: %s", e)
+            if msg_type == "keydown":
+                keyboard.press(key)
+                active_mods.add(key)
+            elif msg_type == "keyup":
+                keyboard.release(key)
+                active_mods.discard(key)
+            elif msg_type == "get_lang":
+                lang = get_current_lang()
+                await websocket.send(json.dumps({"type": "lang", "lang": lang}))
+                await websocket.send(
+                    json.dumps(
+                        {
+                            "type": "sync",
+                            "layout": "ru" if lang.lower().startswith("ru") else "en",
+                        }
+                    )
+                )
     except Exception as e:
-        logging.error("WebSocket crashed: %s", e)
+        logging.warning("WebSocket error: %s", e)
     finally:
         connected_clients.discard(websocket)
+        authorized_clients.discard(websocket)
 
 
 def run_ws_server():

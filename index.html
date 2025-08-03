@@ -53,13 +53,18 @@
       flex-basis: 0;
     }
 
-
+    button.pressed {
+      background: #9bfdce !important;
+      color: #111 !important;
+      font-weight: bold;
+      transform: scale(1.05);
+    }
 
     button.held {
       background: #9bfdce !important;
       color: #111 !important;
       font-weight: bold;
-      transform: scale(1.1);
+      transform: scale(1.05);
     }
   </style>
 </head>
@@ -109,7 +114,34 @@
     const isCommandKey = key => ["enter", "backspace", "delete", "tab"].includes(key);
     const toPhysical = key => currentLayoutName === "ru" && ruToEnMap[key] ? ruToEnMap[key] : key;
 
-    const ws = new WebSocket("ws://" + location.hostname + ":8765");
+    function connectWS() {
+      ws = new WebSocket("ws://" + location.hostname + ":8765");
+
+      ws.onopen = () => {
+        let pin = prompt("Enter PIN to connect:");
+        if (pin) ws.send(JSON.stringify({ type: "pin", pin }));
+      };
+
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+
+        if (data.type === "pin_required") {
+          alert("Wrong PIN or not authorized.");
+        }
+
+        if (data.type === "pin_accepted") {
+          console.log("PIN accepted, full control granted.");
+        }
+
+        // existing handlers like sync, keyup, etc...
+      };
+
+      ws.onclose = () => {
+        alert("WebSocket disconnected.");
+      };
+    }
+
+    connectWS();
 
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
@@ -131,10 +163,12 @@
     function updateHeld() {
       document.querySelectorAll("button").forEach(btn => {
         const key = btn.dataset.key;
-        if (toggled.has(key)) {
-          btn.classList.add("held");
+
+        if (key === "capslock") {
+          const isCaps = navigator.getModifierState && navigator.getModifierState("CapsLock");
+          btn.classList.toggle("held", isCaps);
         } else {
-          btn.classList.remove("held");
+          btn.classList.toggle("held", toggled.has(key));
         }
       });
     }
@@ -144,11 +178,13 @@
       currentLayout.forEach(row => {
         const rowEl = document.createElement("div");
         rowEl.className = "row";
+
         row.forEach(key => {
           const btn = document.createElement("button");
           btn.innerText = key.length === 1 ? key.toUpperCase() : key;
           btn.dataset.key = key;
           btn.classList.add("key");
+
           if (key === "space") {
             btn.classList.add("spacebar");
             btn.innerText = "SPACE";
@@ -157,6 +193,23 @@
           btn.onpointerdown = () => {
             const now = Date.now();
             const physicalKey = toPhysical(key);
+
+            if (key === "capslock") {
+              const shiftKey = "shift";
+              const physicalShift = toPhysical(shiftKey);
+
+              if (toggled.has(shiftKey)) {
+                toggled.delete(shiftKey);
+                ws.send(JSON.stringify({ type: "keyup", key: physicalShift }));
+              } else {
+                toggled.add(shiftKey);
+                ws.send(JSON.stringify({ type: "keydown", key: physicalShift }));
+              }
+
+              updateHeld();
+              return;
+            }
+
             ["alt", "shift", "ctrl"].forEach(mod => {
               if (tempHeld.has(mod) && !toggled.has(mod) && key !== mod) {
                 ws.send(JSON.stringify({ type: "keyup", key: toPhysical(mod) }));
@@ -202,6 +255,7 @@
                   ws.send(JSON.stringify({ type: "keyup", key: physicalKey }));
                   tempHeld.delete(key);
                   btn.classList.remove("pressed");
+                  updateHeld();
                 }
               }, 2000);
               return;
@@ -235,6 +289,15 @@
             }
 
             const physicalKey = toPhysical(key);
+
+            if (key === "capslock") {
+              toggled.delete(key);
+              tempHeld.delete(key);
+              btn.classList.remove("pressed", "held");
+              updateHeld();
+              return;
+            }
+
             if (isModifier(key)) {
               if (tempHeld.has(key) && !toggled.has(key)) {
                 ws.send(JSON.stringify({ type: "keyup", key: physicalKey }));
@@ -302,6 +365,17 @@
 
     currentLayout = layout_en;
     renderKeyboard();
+    setInterval(() => {
+      const capsBtn = document.querySelector('button[data-key="capslock"]');
+      if (!capsBtn) return;
+
+      const isCaps = navigator.getModifierState && navigator.getModifierState("CapsLock");
+      if (isCaps) {
+        capsBtn.classList.add("held");
+      } else {
+        capsBtn.classList.remove("held");
+      }
+    }, 500);
   </script>
 </body>
 
