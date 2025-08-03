@@ -79,7 +79,7 @@
 
     const layout_ru = [
       ["esc", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12"],
-      ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=", "backspace"],
+      ["ё", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=", "backspace"],
       ["tab", "й", "ц", "у", "к", "е", "н", "г", "ш", "щ", "з", "х", "ъ", "\\"],
       ["capslock", "ф", "ы", "в", "а", "п", "р", "о", "л", "д", "ж", "э", "enter"],
       ["shift", "я", "ч", "с", "м", "и", "т", "ь", "б", "ю", ".", "up", "?", "shift"],
@@ -87,11 +87,14 @@
     ];
 
     const ruToEnMap = {
-      "1": "1", "2": "2", "3": "3", "4": "4", "5": "5", "6": "6", "7": "7", "8": "8", "9": "9", "0": "0", "-": "-", "=": "=",
+      "ё": "`", "1": "1", "2": "2", "3": "3", "4": "4", "5": "5", "6": "6", "7": "7", "8": "8", "9": "9", "0": "0", "-": "-", "=": "=",
       "й": "q", "ц": "w", "у": "e", "к": "r", "е": "t", "н": "y", "г": "u", "ш": "i", "щ": "o", "з": "p", "х": "[", "ъ": "]",
       "ф": "a", "ы": "s", "в": "d", "а": "f", "п": "g", "р": "h", "о": "j", "л": "k", "д": "l", "ж": ";", "э": "'",
-      "я": "z", "ч": "x", "с": "c", "м": "v", "и": "b", "т": "n", "ь": "m", "б": ",", "ю": "."
+      "я": "z", "ч": "x", "с": "c", "м": "v", "и": "b", "т": "n", "ь": "m", "б": ",", "ю": ".", ".": "/"
     };
+
+    const toPhysical = key =>
+      currentLayout === layout_ru && ruToEnMap[key] ? ruToEnMap[key] : key;
 
     let currentLayout = layout_en;
     const ws = new WebSocket("ws://" + location.hostname + ":8765");
@@ -123,10 +126,7 @@
 
           btn.onpointerdown = () => {
             const now = Date.now();
-            let physicalKey = key;
-            if (currentLayout === layout_ru && ruToEnMap[key]) {
-              physicalKey = ruToEnMap[key];
-            }
+            const physicalKey = toPhysical(key);
 
             if (isModifier(key)) {
               if (lastClick[key] && now - lastClick[key] < 300) {
@@ -152,9 +152,18 @@
             if (isCommandKey(key)) {
               ws.send(JSON.stringify({ type: "keydown", key: physicalKey }));
               btn.classList.add("pressed");
+              tempHeld.add(key);
+              setTimeout(() => {
+                if (tempHeld.has(key)) {
+                  ws.send(JSON.stringify({ type: "keyup", key: physicalKey }));
+                  tempHeld.delete(key);
+                  btn.classList.remove("pressed");
+                }
+              }, 2000);
               return;
             }
 
+            tempHeld.add(key);
             holdTimeout[key] = setTimeout(() => {
               timers[key] = setInterval(() => {
                 ws.send(JSON.stringify({ type: "keydown", key: physicalKey }));
@@ -182,7 +191,7 @@
 
             if (isModifier(key)) {
               if (tempHeld.has(key)) {
-                ws.send(JSON.stringify({ type: "keyup", key }));
+                ws.send(JSON.stringify({ type: "keyup", key: toPhysical(key) }));
                 tempHeld.delete(key);
                 btn.classList.remove("pressed");
               }
@@ -191,18 +200,15 @@
               return;
             }
 
+            const physicalKey = toPhysical(key);
             if (!toggled.has(key)) {
-              let physicalKey = key;
-              if (currentLayout === layout_ru && ruToEnMap[key]) {
-                physicalKey = ruToEnMap[key];
-              }
               ws.send(JSON.stringify({ type: "keyup", key: physicalKey }));
             }
 
-            if (isCommandKey(key)) {
-              ws.send(JSON.stringify({ type: "keyup", key }));
-              btn.classList.remove("pressed");
+            if (tempHeld.has(key)) {
+              tempHeld.delete(key);
             }
+            btn.classList.remove("pressed");
           };
 
           rowEl.appendChild(btn);
@@ -224,8 +230,8 @@
     };
 
     window.addEventListener("blur", () => {
-      for (const key of toggled) ws.send(JSON.stringify({ type: "keyup", key }));
-      for (const key of tempHeld) ws.send(JSON.stringify({ type: "keyup", key }));
+      for (const key of toggled) ws.send(JSON.stringify({ type: "keyup", key: toPhysical(key) }));
+      for (const key of tempHeld) ws.send(JSON.stringify({ type: "keyup", key: toPhysical(key) }));
       toggled.clear();
       tempHeld.clear();
       updateHeld();
@@ -233,8 +239,8 @@
 
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) {
-        for (const key of toggled) ws.send(JSON.stringify({ type: "keyup", key }));
-        for (const key of tempHeld) ws.send(JSON.stringify({ type: "keyup", key }));
+        for (const key of toggled) ws.send(JSON.stringify({ type: "keyup", key: toPhysical(key) }));
+        for (const key of tempHeld) ws.send(JSON.stringify({ type: "keyup", key: toPhysical(key) }));
         toggled.clear();
         tempHeld.clear();
         updateHeld();
