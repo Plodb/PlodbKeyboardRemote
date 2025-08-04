@@ -375,13 +375,7 @@ if __name__ == "__main__":
     start_key_watcher()
 
     try:
-
-        if sys.stdin and sys.stdout and sys.stderr:
-            show_gui()
-        else:
-
-            while not shutting_down:
-                time.sleep(0.5)
+        show_gui()
     finally:
         shutdown()
         ws_thread.join()
