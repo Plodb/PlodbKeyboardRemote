@@ -308,7 +308,7 @@ def start_http_server():
 
     try:
         http_server = ThreadingHTTPServer(("", 8888), CustomHandler)
-        logging.info("[HTTP] Serving index.html at http://%s:8888", ip)
+
         http_server.serve_forever()
     except Exception as e:
         logging.error("HTTP server failed: %s", e)
