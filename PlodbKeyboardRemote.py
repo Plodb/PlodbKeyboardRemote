@@ -40,7 +40,9 @@ HTML_PATH = os.path.join(os.path.abspath(os.path.dirname(__file__)), "index.html
 LOCK_PATH = os.path.join(os.path.abspath(os.path.dirname(__file__)), "plodb.lock")
 
 # --- Globals ---
-ip = socket.gethostbyname(socket.gethostname())
+ip = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+ip.connect(("8.8.8.8", 80))
+ip = ip.getsockname()[0]
 tray_icon = None
 lock_fp = None
 toggled_mods = set()
