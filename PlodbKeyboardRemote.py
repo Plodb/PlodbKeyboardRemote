@@ -55,7 +55,7 @@ shutting_down = False
 connected_clients = set()
 # --- PIN ---
 PIN_CODE = "".join(random.choices(string.digits, k=4))
-authorized_clients = set()
+authorized_clients = dict()  # ip: websocket
 print(f"[PIN] Web control PIN: {PIN_CODE}")
 
 
@@ -239,7 +239,9 @@ def show_gui():
 async def handler(websocket):
     global toggled_mods, active_mods, connected_clients, authorized_clients
     connected_clients.add(websocket)
-    authed = False
+
+    client_ip = websocket.remote_address[0]
+    authed = client_ip in authorized_clients
 
     try:
         async for message in websocket:
@@ -247,14 +249,17 @@ async def handler(websocket):
             msg_type = data.get("type")
             key = data.get("key", "")
 
+            client_ip = websocket.remote_address[0]
             if not authed:
                 if msg_type == "pin" and data.get("pin") == PIN_CODE:
-                    authorized_clients.add(websocket)
+                    authorized_clients[client_ip] = websocket
                     authed = True
                     await websocket.send(json.dumps({"type": "pin_accepted"}))
+                elif client_ip in authorized_clients:
+                    authed = True
                 else:
                     await websocket.send(json.dumps({"type": "pin_required"}))
-                continue
+                    continue
 
             if msg_type == "keydown":
                 keyboard.press(key)
@@ -276,8 +281,9 @@ async def handler(websocket):
     except Exception as e:
         logging.warning("WebSocket error: %s", e)
     finally:
-        connected_clients.discard(websocket)
-        authorized_clients.discard(websocket)
+        authorized_clients = {
+            k: v for k, v in authorized_clients.items() if v != websocket
+        }
 
 
 def run_ws_server():

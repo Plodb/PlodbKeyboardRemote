@@ -15,6 +15,7 @@ __pycache__/
 build/
 dist/
 *.spec
+*.bat
 
 # Lock file
 plodb.lock
@@ -49,3 +50,4 @@ desktop.ini
 .patch
 =======
 >>>>>>> 2154f3b14ae0f3a010d9033ee9982cd2e3ce5a41
+

@@ -7,6 +7,80 @@
   <title>PlodbKeyboardRemote</title>
   <link rel="icon" href="data:image/png;base64,{ICON_BASE64}">
   <style>
+    body {
+      margin: 0;
+      background: #fed7e9;
+      font-family: monospace;
+      display: flex;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    #sidebar {
+      background: #fd9bca;
+      width: 180px;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      transition: all 0.3s ease;
+    }
+
+    #restore-sidebar {
+      display: none;
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      z-index: 1000;
+    }
+
+    #keyboard {
+      flex: 1;
+      overflow: auto;
+      padding: 1rem;
+      margin: 1rem;
+      border-radius: 14px;
+      background-color: white;
+      height: fit-content;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .row {
+      display: flex;
+      gap: 6px;
+    }
+
+    button {
+      flex: 1;
+      padding: 6px 10px;
+      font-size: 1.5vw;
+      background: #fd9bca;
+      color: #fff;
+      border: #fc69b0 solid;
+      border-radius: 5px;
+      user-select: none;
+      touch-action: manipulation;
+      transition: all 0.1s ease;
+    }
+
+    button.pressed {
+      background: #9bfdce !important;
+      color: #111 !important;
+      font-weight: bold;
+      transform: scale(1.05);
+    }
+
+    button.held {
+      background: #9bfdce !important;
+      color: #111 !important;
+      font-weight: bold;
+      transform: scale(1.05);
+    }
+
     .key-tab {
       flex: 1.5;
     }
@@ -37,72 +111,70 @@
       flex: 1.25;
     }
 
-    body {
-      background: #fed7e9;
-      margin: 0;
-      font-family: monospace;
-      justify-content: center;
-      display: flex;
-      width: 100vw;
-      height: fit-content;
-      overflow: hidden;
+    #help-popup {
+      display: none;
+      position: fixed;
+      top: 20%;
+      left: 50%;
+      transform: translateX(-50%);
+      background: white;
+      color: black;
+      padding: 1em;
+      border: 2px solid #fc69b0;
+      border-radius: 6px;
+      z-index: 1000;
     }
 
-    #keyboard {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-      padding: 1rem;
-      margin: 1rem;
-      border-radius: 14px;
-      background-color: white;
-      height: fit-content;
-      width: 100%;
-    }
-
-    .row {
-      display: flex;
-      gap: 6px;
-    }
-
-    button {
-      flex: 1;
-      padding: 6px 10px;
-      font-size: 1.5vw;
-      background: #fd9bca;
-      color: #fff;
-      border: #fc69b0 solid;
-      border-radius: 5px;
-      user-select: none;
-      touch-action: manipulation;
-      transition: all 0.1s ease;
-    }
-
-    button.spacebar {
-      flex-grow: 6;
-      flex-basis: 0;
-    }
-
-    button.pressed {
-      background: #9bfdce !important;
-      color: #111 !important;
-      font-weight: bold;
-      transform: scale(1.05);
-    }
-
-    button.held {
-      background: #9bfdce !important;
-      color: #111 !important;
-      font-weight: bold;
-      transform: scale(1.05);
+    #help-popup button {
+      margin-top: 10px;
     }
   </style>
 </head>
 
 <body>
-  <button id="lang-switch" class="utility-button">🌐 Lang</button>
+
+  <div id="sidebar">
+    <button id="lang-switch" style="min-width: 120px;">🌐 Lang</button>
+    <button id="help-btn">❓ Help</button>
+    <a href="https://plodb.itch.io/plodb-remote-keyboard" target="_blank">
+      <button>🔗 Itch.io</button>
+    </a>
+    <button id="sound-btn">🔈 Sound: OFF</button>
+    <button id="hide-sidebar-btn" style="margin-top:auto;">←</button>
+  </div>
+
+  <div id="restore-sidebar">
+    <button>→</button>
+  </div>
+
   <div id="keyboard"></div>
 
+  <div id="help-popup">
+    <div><b>Help:</b> Tap buttons to simulate keyboard keys. Double tap modifiers (Ctrl, Shift, Alt) to toggle. Hold
+      Ctrl / Shift / Alt and tap any key — the combo is sent, both keys auto-release. .</div>
+    <button onclick="document.getElementById('help-popup').style.display='none'">Close</button>
+  </div>
+  <script>
+    document.getElementById("help-btn").onclick = () => {
+      document.getElementById("help-popup").style.display = "block";
+    };
+
+    document.getElementById("sound-btn").onclick = () => {
+      const btn = document.getElementById("sound-btn");
+      const on = btn.innerText.includes("OFF");
+      btn.innerText = on ? "🔊 Sound: ON" : "🔈 Sound: OFF";
+    };
+
+    document.getElementById("hide-sidebar-btn").onclick = () => {
+      document.getElementById("sidebar").style.display = "none";
+      document.getElementById("restore-sidebar").style.display = "block";
+    };
+
+    document.getElementById("restore-sidebar").onclick = () => {
+      document.getElementById("sidebar").style.display = "flex";
+      document.getElementById("restore-sidebar").style.display = "none";
+    };
+  </script>
   <script>
     let currentLayout = [];
     let currentLayoutName = "en";
@@ -256,37 +328,57 @@
     }
 
     function connectWS() {
-      ws = new WebSocket("ws://" + location.hostname + ":8765");
+      let reconnectDelay = 1000;
+      let triedPin = false;
+      let pin = localStorage.getItem("plodb_pin");
 
-      ws.onopen = () => {
-        let pin = prompt("Enter PIN to connect:");
-        if (pin) ws.send(JSON.stringify({ type: "pin", pin }));
-      };
+      function tryConnect() {
+        ws = new WebSocket("ws://" + location.hostname + ":8765");
 
-      ws.onmessage = event => {
-        const data = JSON.parse(event.data);
-        if (data.type === "pin_required") {
-          alert("Wrong PIN");
-        }
-        if (data.type === "pin_accepted") {
-          console.log("Connected");
-        }
-        if (data.type === "sync") {
-          currentLayoutName = data.layout;
-          currentLayout = currentLayoutName === "ru" ? layout_ru : layout_en;
-          renderKeyboard();
-        }
-        if (data.type === "keyup") {
-          const key = data.key;
-          toggled.delete(key);
-          keyStates.delete(key);
-          updateButtonStyles();
-        }
-      };
+        ws.onopen = () => {
+          if (!pin) pin = prompt("Enter PIN to connect:");
+          if (pin) {
+            triedPin = true;
+            ws.send(JSON.stringify({ type: "pin", pin }));
+          }
+        };
 
-      ws.onclose = () => {
-        alert("WebSocket closed");
-      };
+        ws.onmessage = event => {
+          const data = JSON.parse(event.data);
+          if (data.type === "pin_required") {
+            localStorage.removeItem("plodb_pin");
+            alert("Wrong PIN");
+            pin = null;
+          }
+          if (data.type === "pin_accepted") {
+            localStorage.setItem("plodb_pin", pin);
+            console.log("Connected");
+          }
+          if (data.type === "sync") {
+            currentLayoutName = data.layout;
+            currentLayout = currentLayoutName === "ru" ? layout_ru : layout_en;
+            renderKeyboard();
+          }
+          if (data.type === "keyup") {
+            const key = data.key;
+            toggled.delete(key);
+            keyStates.delete(key);
+            updateButtonStyles();
+          }
+        };
+
+        ws.onclose = () => {
+          console.warn("WebSocket closed. Reconnecting...");
+          setTimeout(tryConnect, reconnectDelay);
+        };
+
+        ws.onerror = err => {
+          console.error("WebSocket error:", err);
+          ws.close();
+        };
+      }
+
+      tryConnect();
     }
 
     document.getElementById("lang-switch").onclick = () => {
